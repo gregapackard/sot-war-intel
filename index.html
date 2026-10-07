@@ -46,7 +46,6 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 <div class="row"><button id="liveStart">🔴 START LIVE WAR WATCH</button><button id="liveStop" disabled>■ STOP + EXPORT LIVE JSON</button></div>
 <div id="liveSummary" style="margin-top:14px;padding:12px;background:#090b0e;border:1px solid #272d35;border-radius:9px">Live watch idle.</div>
 <div id="commandBoard" style="margin-top:14px"></div>
-<div id="commandBoard" style="margin-top:14px"></div>
 </div>
 <div class="card"><strong>Status</strong><pre id="status">Ready.</pre></div>
 </div>
@@ -226,46 +225,6 @@ function liveRecommendation(sot,opp,target){
  if(lead<0&&v.sot_per_hour<v.opponent_per_hour)return"SUPPRESS";
  if(lead>target*.2&&v.opponent_per_hour>v.sot_per_hour)return"HOLD";
  return"PUSH";
-}
-
-function attackPlayerId(side){return Number(side?.id??side?.player?.id??side?.player_id??0)}
-function attackFactionId(side){return Number(side?.faction?.id??side?.faction_id??0)}
-function attackResult(a){return String(a?.result||a?.outcome||"").toLowerCase()}
-function successfulAttack(a){
- const r=attackResult(a);return !["lost","stalemate","escape","assist","interrupted"].some(x=>r.includes(x));
-}
-function buildCommandIntel(ours,theirs){
- const snaps=liveStore?.snapshots||[],attacks=liveStore?.attacks||[],cur=snaps.at(-1);if(!cur)return null;
- const rabbits=new Map((cur.opponent_members||[]).map(m=>[Number(m.id),{id:Number(m.id),name:m.name,level:m.level,status:m.status,last_action:m.last_action,hits:0,scoreish:0,attackedBy:0,wonAgainst:0,lostAgainst:0}]));
- const matchups={},outside=[];
- for(const a of attacks){
-   const af=attackFactionId(a.attacker),df=attackFactionId(a.defender),aid0=attackPlayerId(a.attacker),did0=attackPlayerId(a.defender);
-   const internal=(af===ours&&df===theirs)||(af===theirs&&df===ours);
-   if((af===ours||df===ours||af===theirs||df===theirs)&&!internal)outside.push({id:aid(a),ended:ended(a),attacker:a.attacker,defender:a.defender,result:a.result,respect_gain:a.respect_gain??null});
-   if(af===theirs&&rabbits.has(aid0)){const r=rabbits.get(aid0);r.hits++;r.scoreish+=Number(a.respect_gain||0)}
-   if(internal){
-     const sot=af===ours?aid0:did0,rid=af===theirs?aid0:did0;if(!rabbits.has(rid))continue;
-     const k=sot+"-"+rid,m=matchups[k]||(matchups[k]={sot_id:sot,rabbit_id:rid,attempts:0,wins:0,losses:0});
-     if(af===ours){m.attempts++;if(successfulAttack(a)){m.wins++;rabbits.get(rid).wonAgainst++}else{m.losses++;rabbits.get(rid).lostAgainst++}}
-   }
- }
- const rows=[...rabbits.values()].map(r=>{
-   const st=String(r.status?.state||""),la=String(r.last_action?.status||"");
-   const unavailable=/hospital|travel|abroad|jail|fallen/i.test(st),active=/online|idle/i.test(la);
-   let threat=Math.min(100,r.hits*7+(active?18:0)+(r.level||0)*.35);
-   let suppress=Math.min(100,r.hits*9+(active?20:0)+(r.scoreish*2));
-   let farm=Math.max(0,Math.min(100,(active?28:8)+(unavailable?-55:25)+Math.max(0,55-(r.level||0))+(r.wonAgainst*3)-(r.lostAgainst*10)));
-   let classification=unavailable?"UNAVAILABLE":suppress>=55?"SUPPRESS":farm>=55?"FARM":threat>=45?"DANGEROUS":"WATCH";
-   const why=[];if(r.hits)why.push(r.hits+" live hits captured");if(active)why.push(la);if(unavailable)why.push(st);if(r.wonAgainst||r.lostAgainst)why.push(`${r.wonAgainst} SoT wins / ${r.lostAgainst} losses`);
-   return{...r,threat:Math.round(threat),farm:Math.round(farm),suppress:Math.round(suppress),classification,why:why.join(" · ")||"baseline only"};
- }).sort((a,b)=>b.suppress-a.suppress||b.threat-a.threat);
- return{rows,matchups:Object.values(matchups),outside};
-}
-function renderCommandBoard(intel){
- if(!intel)return;const topSuppress=intel.rows.filter(x=>x.classification==="SUPPRESS").slice(0,5),topFarm=intel.rows.filter(x=>x.classification==="FARM").sort((a,b)=>b.farm-a.farm).slice(0,8);
- const fmt=(arr,type)=>arr.length?arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid #222"><b>${x.name}</b> — ${type==="farm"?"Farm "+x.farm:"Suppress "+x.suppress+" / Threat "+x.threat}<br><small>${x.why}</small></div>`).join(""):"<small>None yet — collecting evidence.</small>";
- $("commandBoard").innerHTML=`<div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(topFarm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(topSuppress,"sup")}</div></div>
- <div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside.length} captured attack(s) involving SoT/RRR and a third party. This is evidence for review, not an automatic rules accusation.</div></div>`;
 }
 
 function attackPlayerId(side){return Number(side?.id??side?.player?.id??side?.player_id??0)}
