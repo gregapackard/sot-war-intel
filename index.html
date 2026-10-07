@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.1</title>
+<title>Cloudy's SoT War Room v7.2</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.1</h1>
+<h1>☠ Cloudy's SoT War Room v7.2</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -36,7 +36,9 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </div>
 <div class="card">
 <strong>🔴 Live War Watch</strong>
-<div class="sub">Lightweight incremental collection during the active ranked war. Snapshots stay in this tab until you export them.</div>
+<div class="sub">Lightweight incremental collection during the active ranked war. Load a Deep Scan first to seed FFScouter, KAL and historical production into the command model.</div>
+<label>Deep Scan baseline JSON (recommended)</label><input id="baselineFile" type="file" accept=".json,application/json">
+<div id="baselineState" style="margin-top:8px"><small>No baseline loaded — live-only scoring will still work.</small></div>
 <div class="row">
 <div><label>Live snapshot interval (minutes)</label><input id="liveMinutes" type="number" min="2" max="60" value="5"></div>
 <div><label>War ID</label><input id="liveWarId" type="number" value="50768"></div>
@@ -161,6 +163,39 @@ async function collectFFIntel(ffkey,core,ours,theirs){
  return{enabled:true,key_status:keyStatus,opponent:{faction_id:theirs,requested:oi.length,received:os.length,members:om.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:o[String(m.id)]||null}))},sot:{faction_id:ours,requested:si.length,received:ss.length,members:sm.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:s[String(m.id)]||null}))}};
 }
 
+
+let deepBaseline=null,baselineIndex=new Map();
+function num(v){const n=Number(v);return Number.isFinite(n)?n:null}
+function ffEstimate(row){
+ const f=row?.ffscouter||row||{};
+ const vals=[f.bs_estimate,f.battle_stats,f.battlestats,f.total,f.estimate,f?.premium?.estimate,f?.premium_estimate].map(num).filter(x=>x>0);
+ return vals.length?Math.max(...vals):null;
+}
+function indexBaseline(data){
+ const idx=new Map(),oppId=Number(data?.exporter?.opponent_faction_id||0);
+ const ff=data?.ffscouter?.opponent?.members||[];
+ for(const m of ff){const id=Number(m.id||m.player_id);if(!id)continue;const x=idx.get(id)||{id,name:m.name,ff_estimate:null,kal:false,kal_loadouts:0,hist_hits:0,hist_score:0,hist_wars:0};x.name=x.name||m.name;x.ff_estimate=ffEstimate(m);idx.set(id,x)}
+ for(const m of data?.kal?.members||[]){const id=Number(m.id);if(!id)continue;const x=idx.get(id)||{id,name:m.name,ff_estimate:null,kal:false,kal_loadouts:0,hist_hits:0,hist_score:0,hist_wars:0};x.kal=m.status==="ok"&&(m.loadouts||[]).length>0;x.kal_loadouts=(m.loadouts||[]).length;idx.set(id,x)}
+ const reports=data?.ranked_war_reports||{};
+ for(const wrap of Object.values(reports)){
+  const d=wrap?.data||wrap;if(!d)continue;
+  const candidates=[d.members,d.participants,d.factions].filter(Boolean);
+  const walk=v=>{if(Array.isArray(v)){for(const z of v)walk(z);return}if(!v||typeof v!=="object")return;
+   const id=Number(v.id??v.user_id??v.player_id??v.member_id??0),hits=num(v.attacks??v.hits??v.war_hits),score=num(v.score??v.respect??v.respect_gain);
+   if(id&&idx.has(id)&&(hits!==null||score!==null)){const x=idx.get(id);if(hits!==null)x.hist_hits+=hits;if(score!==null)x.hist_score+=score;x.hist_wars+=1}
+   for(const z of Object.values(v))if(z&&typeof z==="object")walk(z);
+  };for(const c of candidates)walk(c);
+ }
+ // More reliable historical aggregation from attack logs.
+ for(const w of Object.values(data?.attacks_by_war||{})){const seen=new Set();for(const a of w?.matchup_attacks||w?.attacks||[]){const af=attackFactionId(a.attacker),ap=attackPlayerId(a.attacker);if(af!==oppId||!idx.has(ap))continue;const x=idx.get(ap);x.hist_hits++;x.hist_score+=Number(a.respect_gain||0);seen.add(ap)}for(const id of seen)idx.get(id).hist_wars++}
+ return idx;
+}
+$("baselineFile").addEventListener("change",async ev=>{
+ const f=ev.target.files?.[0];if(!f)return;
+ try{deepBaseline=JSON.parse(await f.text());baselineIndex=indexBaseline(deepBaseline);const withFF=[...baselineIndex.values()].filter(x=>x.ff_estimate).length,withKAL=[...baselineIndex.values()].filter(x=>x.kal).length;
+ $("baselineState").innerHTML=`<b>Baseline loaded ✓</b> — ${baselineIndex.size} opponents indexed · FF ${withFF} · KAL ${withKAL} · historical war production seeded`;
+ }catch(e){deepBaseline=null;baselineIndex=new Map();$("baselineState").innerHTML="<b>Baseline failed:</b> "+e.message}
+});
 let liveTimer=null,liveRunning=false,liveStore=null,liveSeenAttacks=new Set();
 function nowSec(){return Math.floor(Date.now()/1000)}
 function getRankedWar(data,warId){
@@ -245,12 +280,14 @@ function buildCommandIntel(ours,theirs){
  }
  const rows=[...opponents.values()].map(p=>{
   const st=String(p.status?.state||""),la=String(p.last_action?.status||""),unavailable=/hospital|travel|abroad|jail|fallen/i.test(st),active=/online|idle/i.test(la);
-  const threat=Math.min(100,p.hits*7+(active?18:0)+(p.level||0)*.35);
-  const suppress=Math.min(100,p.hits*9+(active?20:0)+(p.scoreish*2));
-  const farm=Math.max(0,Math.min(100,(active?28:8)+(unavailable?-55:25)+Math.max(0,55-(p.level||0))+(p.sotWins*3)-(p.sotLosses*10)));
+  const base=baselineIndex.get(p.id)||{},histRate=base.hist_wars?base.hist_score/base.hist_wars:0,ff=Math.max(0,Number(base.ff_estimate||0)),ffTier=ff?Math.min(30,Math.max(0,Math.log10(ff)-4)*7):0;
+  const threat=Math.min(100,p.hits*7+(active?18:0)+(p.level||0)*.18+Math.min(28,histRate/18)+ffTier+(base.kal?3:0));
+  const suppress=Math.min(100,p.hits*9+(active?20:0)+(p.scoreish*2)+Math.min(30,histRate/14));
+  const strengthPenalty=ff?Math.min(55,Math.max(0,Math.log10(ff)-4)*12):Math.max(0,(p.level||0)-35)*.7;
+  const farm=Math.max(0,Math.min(100,(active?28:8)+(unavailable?-55:25)+30-strengthPenalty+(p.sotWins*4)-(p.sotLosses*14)-Math.min(20,histRate/25)));
   const classification=unavailable?"UNAVAILABLE":suppress>=55?"SUPPRESS":farm>=55?"FARM":threat>=45?"DANGEROUS":"WATCH";
-  const why=[];if(p.hits)why.push(p.hits+" live hits captured");if(active)why.push(la);if(unavailable)why.push(st);if(p.sotWins||p.sotLosses)why.push(p.sotWins+" SoT wins / "+p.sotLosses+" losses");
-  return{...p,threat:Math.round(threat),farm:Math.round(farm),suppress:Math.round(suppress),classification,why:why.join(" · ")||"baseline only"};
+  const why=[];if(p.hits)why.push(p.hits+" live hits captured");if(active)why.push(la);if(unavailable)why.push(st);if(p.sotWins||p.sotLosses)why.push(p.sotWins+" SoT wins / "+p.sotLosses+" losses");if(base.ff_estimate)why.push("FF est "+Math.round(base.ff_estimate).toLocaleString());if(base.kal)why.push("KAL "+base.kal_loadouts+" loadout"+(base.kal_loadouts===1?"":"s"));if(base.hist_wars)why.push("hist "+base.hist_score.toFixed(1)+" score / "+base.hist_hits+" hits");
+  return{...p,baseline:base,threat:Math.round(threat),farm:Math.round(farm),suppress:Math.round(suppress),classification,why:why.join(" · ")||"live baseline only"};
  }).sort((a,b)=>b.suppress-a.suppress||b.threat-a.threat);
  return{opponent_faction_id:theirs,rows,matchups:Object.values(matchups),outside_activity:outside};
 }
@@ -290,7 +327,7 @@ $("liveStart").onclick=async()=>{
  const key=$("key").value.trim();if(!key)return alert("Paste the Torn API key first.");if(liveRunning)return;
  DELAY=Math.max(700,Math.min(5000,Number($("delay").value)||1100));
  const mins=Math.max(2,Math.min(60,Number($("liveMinutes").value)||5)),ours=Number($("ours").value),theirs=Number($("theirs").value),warId=Number($("liveWarId").value);
- liveStore={exporter:{name:"Cloudy's SoT Live War Watch",version:"7.1",api_key_included:false},war_id:warId,sot_faction_id:ours,opponent_faction_id:theirs,started_at:new Date().toISOString(),interval_minutes:mins,last_attack_ts:0,snapshots:[],attacks:[],derived:{}};
+ liveStore={exporter:{name:"Cloudy's SoT Live War Watch",version:"7.2",api_key_included:false,deep_scan_baseline_loaded:!!deepBaseline},war_id:warId,sot_faction_id:ours,opponent_faction_id:theirs,started_at:new Date().toISOString(),interval_minutes:mins,last_attack_ts:0,snapshots:[],attacks:[],derived:{}};
  liveSeenAttacks=new Set();liveRunning=true;$("liveStart").disabled=true;$("liveStop").disabled=false;
  await liveSnapshot();liveTimer=setInterval(liveSnapshot,mins*60000);
 };
