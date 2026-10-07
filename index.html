@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.5</title>
+<title>Cloudy's SoT War Room v7.6</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.5</h1>
+<h1>☠ Cloudy's SoT War Room v7.6</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -250,10 +250,16 @@ function personalizedTargets(ours,theirs,rows,matchups){
    const sotBase=(deepBaseline?.ffscouter?.sot?.members||[]).find(x=>Number(x.id)===sid),sotFF=ffEstimate(sotBase),oppFF=Number(p.baseline?.ff_estimate||0);
    if(sotFF>0&&oppFF>0){const ratio=sotFF/oppFF;prior=Math.max(.08,Math.min(.98,.5+Math.log10(ratio)*.28))}
    const winProb=attempts?(wins+prior*3)/(attempts+3):prior;
-   const histRespect=liveStore.attacks.filter(a=>attackFactionId(a.attacker)===ours&&attackPlayerId(a.attacker)===sid&&attackPlayerId(a.defender)===p.id&&successfulAttack(a)).map(respectGain);
-   const expectedRespect=histRespect.length?histRespect.reduce((a,b)=>a+b,0)/histRespect.length:Math.max(.5,Math.min(15,(p.level||1)/8));
-   const value=winProb*expectedRespect,confidence=Math.min(100,25+attempts*15+(sotFF&&oppFF?30:0)+(histRespect.length?20:0));
-   list.push({opponent_id:p.id,name:p.name,win_probability:winProb,expected_respect:expectedRespect,expected_value_per_25e:value,attempts,wins,confidence,classification:p.classification});
+   const ownRespect=liveStore.attacks.filter(a=>attackFactionId(a.attacker)===ours&&attackPlayerId(a.attacker)===sid&&attackPlayerId(a.defender)===p.id&&successfulAttack(a)).map(respectGain).filter(x=>x>0);
+   const factionRespect=liveStore.attacks.filter(a=>attackFactionId(a.attacker)===ours&&attackPlayerId(a.defender)===p.id&&successfulAttack(a)).map(respectGain).filter(x=>x>0);
+   const historicalRespect=[];for(const w of Object.values(deepBaseline?.attacks_by_war||{}))for(const a of w?.matchup_attacks||[]){if(attackFactionId(a.attacker)===ours&&attackPlayerId(a.defender)===p.id&&successfulAttack(a)){const rg=respectGain(a);if(rg>0)historicalRespect.push(rg)}}
+   const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+   const ownAvg=avg(ownRespect),factionAvg=avg(factionRespect),histAvg=avg(historicalRespect);
+   const fallback=Math.max(.5,Math.min(15,(p.level||1)/8));
+   const expectedRespect=ownAvg??factionAvg??histAvg??fallback;
+   const respectSource=ownAvg!=null?"personal live":factionAvg!=null?"SoT live":histAvg!=null?"SoT historical":"level fallback";
+   const value=winProb*expectedRespect,confidence=Math.min(100,20+attempts*15+(sotFF&&oppFF?25:0)+(ownRespect.length?30:factionRespect.length?22:historicalRespect.length?14:0));
+   list.push({opponent_id:p.id,name:p.name,win_probability:winProb,expected_respect:expectedRespect,respect_source:respectSource,respect_samples:ownRespect.length||factionRespect.length||historicalRespect.length,expected_value_per_25e:value,attempts,wins,confidence,classification:p.classification});
   }out[sid]={sot_id:sid,name:m.name,targets:list.sort((a,b)=>b.expected_value_per_25e-a.expected_value_per_25e).slice(0,8)}}
  return out;
 }
@@ -285,7 +291,7 @@ function buildCommandIntel(ours,theirs){
 function renderCommandBoard(intel){
  if(!intel)return;
  const sid=Number($("targetMemberId")?.value||0),pt=intel.personalized_targets?.[sid]?.targets||[];
- const targetHtml=pt.length?pt.slice(0,8).map((x,i)=>"<div style=\"padding:7px 0;border-bottom:1px solid #222\"><b>#"+(i+1)+" "+x.name+"</b> — EV "+x.expected_value_per_25e.toFixed(2)+" score/25E · win "+Math.round(x.win_probability*100)+"% · respect "+x.expected_respect.toFixed(2)+"<br><small>"+x.attempts+" observed attempts · confidence "+Math.round(x.confidence)+"%</small></div>").join(""):"<small>Collecting matchup evidence / check member ID.</small>";
+ const targetHtml=pt.length?pt.slice(0,8).map((x,i)=>"<div style=\"padding:7px 0;border-bottom:1px solid #222\"><b>#"+(i+1)+" "+x.name+"</b> — EV "+x.expected_value_per_25e.toFixed(2)+" score/25E · win "+Math.round(x.win_probability*100)+"% · respect "+x.expected_respect.toFixed(2)+"<br><small>"+x.attempts+" personal attempts · respect source: "+x.respect_source+" ("+x.respect_samples+" samples) · confidence "+Math.round(x.confidence)+"%</small></div>").join(""):"<small>Collecting matchup evidence / check member ID.</small>";
  const sup=intel.rows.filter(x=>x.classification==="SUPPRESS").slice(0,5),farm=intel.rows.filter(x=>x.classification==="FARM").sort((a,b)=>b.farm-a.farm).slice(0,8);
  const fmt=(arr,type)=>arr.length?arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid #222"><b>${x.name}</b> — ${type==="farm"?"Farm "+x.farm:"Suppress "+x.suppress+" / Threat "+x.threat}<br><small>${x.why}</small></div>`).join(""):"<small>None yet — collecting evidence.</small>";
  $("commandBoard").innerHTML=`<div class="card" style="margin:0 0 12px"><b>⚔ BEST EXPECTED-VALUE TARGETS</b><div>${targetHtml}</div></div><div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(farm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(sup,"sup")}</div></div><div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside_activity.length} captured attack(s) involving either war faction and a third party. Review evidence manually; this is not an automatic violation finding.</div></div><div class="card" style="margin:12px 0 0"><b>💉 REVIVE / SUPPRESSION INTEL</b><div>${intel.suppression_lifecycle.filter(x=>x.hosp_entries||x.revives).slice(0,10).map(x=>"<div style=\"padding:6px 0\"><b>"+x.name+"</b> — hosp "+x.hosp_entries+" · revives "+x.revives+(x.median_observed_return_seconds!=null?" · observed return ~"+Math.round(x.median_observed_return_seconds/60)+"m":"")+(x.revive_settings.length?" · revive setting "+x.revive_settings.join("/"):"")+"</div>").join("")||"<small>Collecting hospital/revive transitions.</small>"}</div></div>`;
@@ -322,7 +328,7 @@ $("liveStart").onclick=async()=>{
  const key=$("key").value.trim();if(!key)return alert("Paste the Torn API key first.");if(liveRunning)return;
  DELAY=Math.max(700,Math.min(5000,Number($("delay").value)||1100));
  const mins=Math.max(2,Math.min(60,Number($("liveMinutes").value)||5)),ours=Number($("ours").value),theirs=Number($("theirs").value),warId=Number($("liveWarId").value);
- liveStore={exporter:{name:"Cloudy's SoT Live War Watch",version:"7.3",api_key_included:false,deep_scan_baseline_loaded:!!deepBaseline},war_id:warId,sot_faction_id:ours,opponent_faction_id:theirs,started_at:new Date().toISOString(),interval_minutes:mins,last_attack_ts:0,last_revive_ts:0,seen_revives:{},snapshots:[],attacks:[],revives:[],derived:{}};
+ liveStore={exporter:{name:"Cloudy's SoT Live War Watch",version:"7.6",api_key_included:false,deep_scan_baseline_loaded:!!deepBaseline},war_id:warId,sot_faction_id:ours,opponent_faction_id:theirs,started_at:new Date().toISOString(),interval_minutes:mins,last_attack_ts:0,last_revive_ts:0,seen_revives:{},snapshots:[],attacks:[],revives:[],derived:{}};
  liveSeenAttacks=new Set();liveRunning=true;$("liveStart").disabled=true;$("liveStop").disabled=false;
  await liveSnapshot();liveTimer=setInterval(liveSnapshot,mins*60000);
 };
