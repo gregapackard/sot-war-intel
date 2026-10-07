@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v6.2</title>
+<title>Cloudy's SoT War Room v6.3</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v6.2</h1>
+<h1>☠ Cloudy's SoT War Room v6.3</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -31,7 +31,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 <div><label>KAL distinct loadouts per rabbit</label><input id="kalHistory" type="number" min="1" max="10" value="3"></div>
 <div><label>KAL request delay (ms)</label><input id="kalDelay" type="number" min="250" max="5000" value="500"></div>
 </div>
-<button id="go">Build Bulk War Intel Export</button>
+<div id="bridgeState" style="margin-top:16px;padding:10px;border:1px solid #3a424e;border-radius:9px;font-weight:800">KAL Bridge: checking…</div><button id="go">Build Bulk War Intel Export</button>
 <p><small>Torn history uses attacksfull bulk mode. FFScouter is batched. KAL requests are relayed through the Cloudy KAL Bridge userscript to avoid browser CORS. Install/enable the bridge before scanning. Missing intel is recorded, not fatal.</small></p>
 </div>
 <div class="card"><strong>Status</strong><pre id="status">Ready.</pre></div>
@@ -91,13 +91,29 @@ const KALAPI="https://api.kalends.dev",KAL_SCRIPT_VERSION="1.2.9";let KAL_DELAY=
 function kalBridgeReq(url,timeoutMs=30000){
  return new Promise((resolve,reject)=>{
   const requestId=`kal-${Date.now()}-${Math.random().toString(36).slice(2)}`;let done=false;
-  const cleanup=()=>{window.removeEventListener("message",onMessage);clearTimeout(timer)};
-  const onMessage=ev=>{if(ev.source!==window)return;const d=ev.data;if(!d||d.source!=="cloudy-kal-bridge"||d.type!=="KAL_RESPONSE"||d.requestId!==requestId)return;done=true;cleanup();if(d.error)reject(Error(d.error));else resolve(d)};
-  window.addEventListener("message",onMessage);
-  const timer=setTimeout(()=>{if(done)return;cleanup();reject(Error("KAL bridge timeout. Install/enable Cloudy's KAL Bridge userscript and refresh this page."))},timeoutMs);
-  window.postMessage({source:"cloudy-war-exporter",type:"KAL_REQUEST",requestId,url},"*");
+  const responseEvent="cloudy-kal-response-"+requestId;
+  const cleanup=()=>{document.removeEventListener(responseEvent,onResponse);clearTimeout(timer)};
+  const onResponse=ev=>{const d=ev.detail||{};done=true;cleanup();if(d.error)reject(Error(d.error));else resolve(d)};
+  document.addEventListener(responseEvent,onResponse,{once:true});
+  const timer=setTimeout(()=>{if(done)return;cleanup();reject(Error("KAL bridge not detected. Update/enable Cloudy's KAL Bridge userscript and refresh this page."))},timeoutMs);
+  document.dispatchEvent(new CustomEvent("cloudy-kal-request",{detail:{requestId,url,responseEvent}}));
  });
 }
+function bridgePing(timeoutMs=1500){
+ return new Promise(resolve=>{
+  const id=`ping-${Date.now()}-${Math.random().toString(36).slice(2)}`,evt="cloudy-kal-pong-"+id;
+  const done=v=>{document.removeEventListener(evt,on);clearTimeout(t);resolve(v)},on=()=>done(true);
+  document.addEventListener(evt,on,{once:true});
+  const t=setTimeout(()=>done(false),timeoutMs);
+  document.dispatchEvent(new CustomEvent("cloudy-kal-ping",{detail:{responseEvent:evt}}));
+ });
+}
+async function refreshBridgeState(){
+ const el=$("bridgeState"),ok=await bridgePing();
+ el.textContent=ok?"KAL Bridge: CONNECTED ✓":"KAL Bridge: NOT DETECTED ✗ — update/install bridge, then refresh";
+ el.style.borderColor=ok?"#238636":"#ad252d";return ok;
+}
+setTimeout(refreshBridgeState,250);
 async function kalReq(path,kalkey){
  for(let attempt=0;attempt<5;attempt++){
   const wait=KAL_DELAY-(Date.now()-kalLastReq);if(wait>0)await sleep(wait);kalLastReq=Date.now();kalReqNo++;
@@ -134,13 +150,13 @@ async function collectFFIntel(ffkey,core,ours,theirs){
 }
 $("go").onclick=async()=>{
  const key=$("key").value.trim(),ffkey=$("ffkey").value.trim(),kalkey=$("kalkey").value.trim(),ours=Number($("ours").value),theirs=Number($("theirs").value),n=Math.max(1,Math.min(20,Number($("warCount").value)||6));DELAY=Math.max(700,Math.min(5000,Number($("delay").value)||1100));const kh=Math.max(1,Math.min(10,Number($("kalHistory").value)||3));KAL_DELAY=Math.max(250,Math.min(5000,Number($("kalDelay").value)||500));if(!key)return alert("Paste an API key.");$("go").disabled=true;$("status").textContent="";reqNo=0;lastReq=0;kalReqNo=0;kalLastReq=0;
- try{log(`v6.2 War Room deep scan started. Torn delay ${DELAY}ms; KAL delay ${KAL_DELAY}ms.`);const core={},specs=[["sot_basic",`/faction/${ours}/basic?striptags=true`],["sot_members",`/faction/${ours}/members?striptags=true`],["sot_wars",`/faction/${ours}/wars`],["sot_rankedwars",`/faction/${ours}/rankedwars?limit=100`],["opponent_basic",`/faction/${theirs}/basic?striptags=true`],["opponent_members",`/faction/${theirs}/members?striptags=true`],["opponent_wars",`/faction/${theirs}/wars`],["opponent_rankedwars",`/faction/${theirs}/rankedwars?limit=100`]];for(const[name,path]of specs)core[name]=await opt(path,key,name);
+ try{log(`v6.3 War Room deep scan started. Torn delay ${DELAY}ms; KAL delay ${KAL_DELAY}ms.`);const core={},specs=[["sot_basic",`/faction/${ours}/basic?striptags=true`],["sot_members",`/faction/${ours}/members?striptags=true`],["sot_wars",`/faction/${ours}/wars`],["sot_rankedwars",`/faction/${ours}/rankedwars?limit=100`],["opponent_basic",`/faction/${theirs}/basic?striptags=true`],["opponent_members",`/faction/${theirs}/members?striptags=true`],["opponent_wars",`/faction/${theirs}/wars`],["opponent_rankedwars",`/faction/${theirs}/rankedwars?limit=100`]];for(const[name,path]of specs)core[name]=await opt(path,key,name);
  const selected=new Map(),addSide=(k,s)=>{if(!core[k]?.ok)return;for(const w of wars(core[k].data).filter(w=>Number(w.end)>0).slice(0,n))if(w?.id&&!selected.has(Number(w.id)))selected.set(Number(w.id),{...w,selected_from:s})};addSide("opponent_rankedwars","opponent");addSide("sot_rankedwars","sot");log(`\nSelected ${selected.size} completed wars.`);
  const ffscouter=await collectFFIntel(ffkey,core,ours,theirs),kal=await collectKALIntel(kalkey,core,theirs,kh);log("\nPulling ranked war reports...");const reports={};for(const[id]of selected)reports[id]=await opt(`/faction/${id}/rankedwarreport`,key,`ranked war report ${id}`);
  log("\nBulk attack history: /faction/attacksfull limit=1000");const attacksByWar={};let idx=0;for(const[id,w]of selected){idx++;const start=Number(w.start),stop=Number(w.end),ids=(w.factions||[]).map(f=>Number(f.id));log(`\n[${idx}/${selected.size}] War ${id}`);if(!start||!stop){attacksByWar[id]={ok:false,error:"Missing completed-war timestamps"};continue}const bulk=await bulkWindow(start,stop,key,`war ${id}`);attacksByWar[id]={war_id:id,selected_from:w.selected_from,start,end:stop,faction_ids:ids,ok:bulk.ok,pages:bulk.pages,errors:bulk.errors,attacks:bulk.attacks,matchup_attacks:bulk.attacks.filter(a=>ids.length>=2&&matchup(a,ids[0],ids[1]))}}
  const support={sot_chain:await opt(`/faction/${ours}/chain`,key,"SoT current chain"),opponent_chain:await opt(`/faction/${theirs}/chain`,key,"Opponent current chain"),sot_chains:await opt(`/faction/${ours}/chains?limit=100&sort=DESC`,key,"SoT chain history"),opponent_chains:await opt(`/faction/${theirs}/chains?limit=100&sort=DESC`,key,"Opponent chain history")};
- const out={exporter:{name:"Cloudy's War Intel Exporter",version:"6.2",mode:"prewar-deep+ffscouter-premium+kal-loadouts-bridge",exported_at:new Date().toISOString(),sot_faction_id:ours,opponent_faction_id:theirs,completed_wars_requested_per_faction:n,request_delay_ms:DELAY,api_key_included:false,ffscouter_key_included:false,kal_key_included:false,kal_history_limit:kh,kal_request_delay_ms:KAL_DELAY},core,ffscouter,kal,...support,ranked_war_reports:reports,attacks_by_war:attacksByWar};
- const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`SoT_DEEP_War_Intel_v6_2_FF_KAL_${ours}_vs_${theirs}_${new Date().toISOString().replace(/[:.]/g,"-")}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);log(`\n✓ DONE — ${reqNo} Torn requests + ${kalReqNo} KAL requests. Upload the v6.2 JSON here.`);
+ const out={exporter:{name:"Cloudy's War Intel Exporter",version:"6.3",mode:"prewar-deep+ffscouter-premium+kal-loadouts-bridge",exported_at:new Date().toISOString(),sot_faction_id:ours,opponent_faction_id:theirs,completed_wars_requested_per_faction:n,request_delay_ms:DELAY,api_key_included:false,ffscouter_key_included:false,kal_key_included:false,kal_history_limit:kh,kal_request_delay_ms:KAL_DELAY},core,ffscouter,kal,...support,ranked_war_reports:reports,attacks_by_war:attacksByWar};
+ const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`SoT_DEEP_War_Intel_v6_3_FF_KAL_${ours}_vs_${theirs}_${new Date().toISOString().replace(/[:.]/g,"-")}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);log(`\n✓ DONE — ${reqNo} Torn requests + ${kalReqNo} KAL requests. Upload the v6.3 JSON here.`);
  }catch(e){log(`\n✗ ${e.message}`)}finally{$("go").disabled=false}
 };
 </script></body></html>
