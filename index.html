@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.4</title>
+<title>Cloudy's SoT War Room v7.5</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.4</h1>
+<h1>☠ Cloudy's SoT War Room v7.5</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -243,6 +243,20 @@ function suppressionLifecycle(){
  for(const rv of liveStore?.revives||[]){const id=Number(rv.target?.id??rv.target_id??0);if(!id)continue;const row=out[id]||(out[id]={id,name:rv.target?.name||"",hosp_entries:0,returns:[],revives:0,revive_settings:[],revivable_states:[]});row.revives++}
  return Object.values(out).map(x=>{const a=[...x.returns].sort((a,b)=>a-b);return{...x,median_observed_return_seconds:a.length?a[Math.floor(a.length/2)]:null}});
 }
+function respectGain(a){return Math.max(0,Number(a?.respect_gain??a?.respect??0))}
+function personalizedTargets(ours,theirs,rows,matchups){
+ const cur=liveStore?.snapshots?.at(-1),sot=cur?.sot_members||[],byOpp=new Map(rows.map(x=>[x.id,x])),out={};
+ for(const m of sot){const sid=Number(m.id),list=[];for(const p of rows){if(p.classification==="UNAVAILABLE")continue;const mm=matchups.find(x=>x.sot_id===sid&&x.opponent_id===p.id);const attempts=mm?.attempts||0,wins=mm?.wins||0;let prior=.82;
+   const sotBase=(deepBaseline?.ffscouter?.sot?.members||[]).find(x=>Number(x.id)===sid),sotFF=ffEstimate(sotBase),oppFF=Number(p.baseline?.ff_estimate||0);
+   if(sotFF>0&&oppFF>0){const ratio=sotFF/oppFF;prior=Math.max(.08,Math.min(.98,.5+Math.log10(ratio)*.28))}
+   const winProb=attempts?(wins+prior*3)/(attempts+3):prior;
+   const histRespect=liveStore.attacks.filter(a=>attackFactionId(a.attacker)===ours&&attackPlayerId(a.attacker)===sid&&attackPlayerId(a.defender)===p.id&&successfulAttack(a)).map(respectGain);
+   const expectedRespect=histRespect.length?histRespect.reduce((a,b)=>a+b,0)/histRespect.length:Math.max(.5,Math.min(15,(p.level||1)/8));
+   const value=winProb*expectedRespect,confidence=Math.min(100,25+attempts*15+(sotFF&&oppFF?30:0)+(histRespect.length?20:0));
+   list.push({opponent_id:p.id,name:p.name,win_probability:winProb,expected_respect:expectedRespect,expected_value_per_25e:value,attempts,wins,confidence,classification:p.classification});
+  }out[sid]={sot_id:sid,name:m.name,targets:list.sort((a,b)=>b.expected_value_per_25e-a.expected_value_per_25e).slice(0,8)}}
+ return out;
+}
 function buildCommandIntel(ours,theirs){
  const snaps=liveStore?.snapshots||[],attacks=liveStore?.attacks||[],cur=snaps.at(-1);if(!cur)return null;
  const opponents=new Map((cur.opponent_members||[]).map(m=>[Number(m.id),{id:Number(m.id),name:m.name,level:m.level,status:m.status,last_action:m.last_action,hits:0,scoreish:0,sotWins:0,sotLosses:0}]));
@@ -266,7 +280,7 @@ function buildCommandIntel(ours,theirs){
   const why=[];if(p.hits)why.push(p.hits+" live hits captured");if(active)why.push(la);if(unavailable)why.push(st);if(p.sotWins||p.sotLosses)why.push(p.sotWins+" SoT wins / "+p.sotLosses+" losses");if(base.ff_estimate)why.push("FF est "+Math.round(base.ff_estimate).toLocaleString());if(base.kal)why.push("KAL "+base.kal_loadouts+" loadout"+(base.kal_loadouts===1?"":"s"));if(base.hist_wars)why.push("hist "+base.hist_score.toFixed(1)+" score / "+base.hist_hits+" hits");if(base.activity_ratio!=null)why.push("FF activity "+Math.round(base.activity_ratio*100)+"% buckets");if(base.stat_growth!=null)why.push("stat trend "+(base.stat_growth>=0?"+":"")+Math.round(base.stat_growth*100)+"%");
   return{...p,baseline:base,threat:Math.round(threat),farm:Math.round(farm),suppress:Math.round(suppress),classification,why:why.join(" · ")||"live baseline only"};
  }).sort((a,b)=>b.suppress-a.suppress||b.threat-a.threat);
- return{opponent_faction_id:theirs,rows,matchups:Object.values(matchups),outside_activity:outside,suppression_lifecycle:suppressionLifecycle()};
+ const matchupRows=Object.values(matchups);return{opponent_faction_id:theirs,rows,matchups:matchupRows,personalized_targets:personalizedTargets(ours,theirs,rows,matchupRows),outside_activity:outside,suppression_lifecycle:suppressionLifecycle()};
 }
 function renderCommandBoard(intel){
  if(!intel)return;
