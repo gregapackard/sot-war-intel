@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v6.3</title>
+<title>Cloudy's SoT War Room v7.0</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v6.3</h1>
+<h1>☠ Cloudy's SoT War Room v7.0</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -33,6 +33,16 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </div>
 <div id="bridgeState" style="margin-top:16px;padding:10px;border:1px solid #3a424e;border-radius:9px;font-weight:800">KAL Bridge: checking…</div><button id="go">Build Bulk War Intel Export</button>
 <p><small>Torn history uses attacksfull bulk mode. FFScouter is batched. KAL requests are relayed through the Cloudy KAL Bridge userscript to avoid browser CORS. Install/enable the bridge before scanning. Missing intel is recorded, not fatal.</small></p>
+</div>
+<div class="card">
+<strong>🔴 Live War Watch</strong>
+<div class="sub">Lightweight incremental collection during the active ranked war. Snapshots stay in this tab until you export them.</div>
+<div class="row">
+<div><label>Live snapshot interval (minutes)</label><input id="liveMinutes" type="number" min="2" max="60" value="5"></div>
+<div><label>War ID</label><input id="liveWarId" type="number" value="50768"></div>
+</div>
+<div class="row"><button id="liveStart">🔴 START LIVE WAR WATCH</button><button id="liveStop" disabled>■ STOP + EXPORT LIVE JSON</button></div>
+<div id="liveSummary" style="margin-top:14px;padding:12px;background:#090b0e;border:1px solid #272d35;border-radius:9px">Live watch idle.</div>
 </div>
 <div class="card"><strong>Status</strong><pre id="status">Ready.</pre></div>
 </div>
@@ -148,6 +158,66 @@ async function collectFFIntel(ffkey,core,ours,theirs){
  const os=await batch(oi,"Opponent"),ss=await batch(si,"SoT"),by=rows=>Object.fromEntries(rows.map(x=>[String(x.player_id),x])),o=by(os),s=by(ss);
  return{enabled:true,key_status:keyStatus,opponent:{faction_id:theirs,requested:oi.length,received:os.length,members:om.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:o[String(m.id)]||null}))},sot:{faction_id:ours,requested:si.length,received:ss.length,members:sm.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:s[String(m.id)]||null}))}};
 }
+
+let liveTimer=null,liveRunning=false,liveStore=null,liveSeenAttacks=new Set();
+function nowSec(){return Math.floor(Date.now()/1000)}
+function getRankedWar(data,warId){
+ const rw=data?.wars?.ranked||data?.data?.wars?.ranked;
+ if(rw&&Number(rw.war_id)===Number(warId))return rw;
+ const arr=data?.rankedwars||data?.data?.rankedwars||[];
+ return arr.find(w=>Number(w.id)===Number(warId))||null;
+}
+function memberState(m){return{id:m.id,name:m.name,level:m.level,last_action:m.last_action||null,status:m.status||null,is_revivable:m.is_revivable??null}}
+function scoreSide(w,id){const f=(w?.factions||[]).find(x=>Number(x.id)===Number(id));return f?{score:Number(f.score||0),chain:Number(f.chain||0)}:{score:0,chain:0}}
+function velocity(minutes,ours,theirs){
+ if(!liveStore||liveStore.snapshots.length<2)return null;
+ const cur=liveStore.snapshots.at(-1),cut=cur.timestamp-minutes*60;
+ let old=liveStore.snapshots[0];for(const x of liveStore.snapshots){if(x.timestamp<=cut)old=x;else break}
+ const hrs=Math.max((cur.timestamp-old.timestamp)/3600,1/60);
+ return{window_minutes:minutes,sot_per_hour:(cur.score.sot-old.score.sot)/hrs,opponent_per_hour:(cur.score.opponent-old.score.opponent)/hrs};
+}
+function liveRecommendation(sot,opp,target){
+ const v=velocity(15);if(!v)return"COLLECTING BASELINE";
+ const lead=sot-opp;
+ if(v.opponent_per_hour>v.sot_per_hour*1.35&&lead<target*.12)return"SUPPRESS";
+ if(sot>=target*.85&&lead>target*.15)return"PUSH";
+ if(lead<0&&v.sot_per_hour<v.opponent_per_hour)return"SUPPRESS";
+ if(lead>target*.2&&v.opponent_per_hour>v.sot_per_hour)return"HOLD";
+ return"PUSH";
+}
+async function liveSnapshot(){
+ if(!liveRunning)return;
+ const key=$("key").value.trim(),ours=Number($("ours").value),theirs=Number($("theirs").value),warId=Number($("liveWarId").value);
+ try{
+  log("\n🔴 LIVE snapshot starting...");
+  const warRaw=await req(`/faction/${ours}/wars`,key),war=getRankedWar(warRaw,warId);
+  if(!war)throw Error("Active ranked war not found for War ID "+warId);
+  const om=await req(`/faction/${theirs}/members?striptags=true`,key),sm=await req(`/faction/${ours}/members?striptags=true`,key);
+  const from=liveStore?.last_attack_ts||Math.max(Number(war.start||0),nowSec()-7200),to=nowSec();
+  const atk=await req(`/faction/attacksfull?limit=1000&sort=ASC&from=${from}&to=${to}`,key);
+  const raw=atk.attacks||[],newAttacks=[];
+  for(const a of raw){const id=aid(a);if(!liveSeenAttacks.has(id)){liveSeenAttacks.add(id);newAttacks.push(a)}liveStore.last_attack_ts=Math.max(liveStore.last_attack_ts||0,ended(a)||0)}
+  const os=scoreSide(war,ours),rs=scoreSide(war,theirs),snap={timestamp:nowSec(),captured_at:new Date().toISOString(),score:{sot:os.score,opponent:rs.score,target:Number(war.target||0),sot_chain:os.chain,opponent_chain:rs.chain},opponent_members:(om.members||[]).map(memberState),sot_members:(sm.members||[]).map(memberState),new_attack_ids:newAttacks.map(a=>aid(a))};
+  liveStore.snapshots.push(snap);liveStore.attacks.push(...newAttacks);
+  const v5=velocity(5),v15=velocity(15),rec=liveRecommendation(os.score,rs.score,Number(war.target||7500));
+  liveStore.derived={updated_at:snap.captured_at,recommendation:rec,velocity_5m:v5,velocity_15m:v15,total_attacks_captured:liveStore.attacks.length};
+  $("liveSummary").innerHTML=`<b>${rec}</b> — SoT ${os.score.toLocaleString()} vs RRR ${rs.score.toLocaleString()} / ${Number(war.target||0).toLocaleString()}<br>Snapshots: ${liveStore.snapshots.length} · New attacks this pass: ${newAttacks.length} · Total captured: ${liveStore.attacks.length}${v15?`<br>15m pace: SoT ${v15.sot_per_hour.toFixed(0)}/hr · RRR ${v15.opponent_per_hour.toFixed(0)}/hr`:""}`;
+  log(`✓ LIVE: SoT ${os.score} / RRR ${rs.score}; +${newAttacks.length} attacks; recommendation ${rec}`);
+ }catch(e){log("⚠ LIVE snapshot: "+e.message)}
+}
+function exportLive(){
+ if(!liveStore)return;const clean=sanitizeCredentialEchoes(liveStore),blob=new Blob([JSON.stringify(clean,null,2)],{type:"application/json"}),a=document.createElement("a");
+ a.href=URL.createObjectURL(blob);a.download=`SoT_War_${liveStore.war_id}_LIVE_${new Date().toISOString().replace(/[:.]/g,"-")}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+$("liveStart").onclick=async()=>{
+ const key=$("key").value.trim();if(!key)return alert("Paste the Torn API key first.");if(liveRunning)return;
+ DELAY=Math.max(700,Math.min(5000,Number($("delay").value)||1100));
+ const mins=Math.max(2,Math.min(60,Number($("liveMinutes").value)||5)),ours=Number($("ours").value),theirs=Number($("theirs").value),warId=Number($("liveWarId").value);
+ liveStore={exporter:{name:"Cloudy's SoT Live War Watch",version:"7.0",api_key_included:false},war_id:warId,sot_faction_id:ours,opponent_faction_id:theirs,started_at:new Date().toISOString(),interval_minutes:mins,last_attack_ts:0,snapshots:[],attacks:[],derived:{}};
+ liveSeenAttacks=new Set();liveRunning=true;$("liveStart").disabled=true;$("liveStop").disabled=false;
+ await liveSnapshot();liveTimer=setInterval(liveSnapshot,mins*60000);
+};
+$("liveStop").onclick=()=>{if(liveTimer)clearInterval(liveTimer);liveTimer=null;liveRunning=false;$("liveStart").disabled=false;$("liveStop").disabled=true;if(liveStore){liveStore.stopped_at=new Date().toISOString();exportLive()}log("\n■ Live War Watch stopped and exported.");};
 $("go").onclick=async()=>{
  const key=$("key").value.trim(),ffkey=$("ffkey").value.trim(),kalkey=$("kalkey").value.trim(),ours=Number($("ours").value),theirs=Number($("theirs").value),n=Math.max(1,Math.min(20,Number($("warCount").value)||6));DELAY=Math.max(700,Math.min(5000,Number($("delay").value)||1100));const kh=Math.max(1,Math.min(10,Number($("kalHistory").value)||3));KAL_DELAY=Math.max(250,Math.min(5000,Number($("kalDelay").value)||500));if(!key)return alert("Paste an API key.");$("go").disabled=true;$("status").textContent="";reqNo=0;lastReq=0;kalReqNo=0;kalLastReq=0;
  try{log(`v6.3 War Room deep scan started. Torn delay ${DELAY}ms; KAL delay ${KAL_DELAY}ms.`);const core={},specs=[["sot_basic",`/faction/${ours}/basic?striptags=true`],["sot_members",`/faction/${ours}/members?striptags=true`],["sot_wars",`/faction/${ours}/wars`],["sot_rankedwars",`/faction/${ours}/rankedwars?limit=100`],["opponent_basic",`/faction/${theirs}/basic?striptags=true`],["opponent_members",`/faction/${theirs}/members?striptags=true`],["opponent_wars",`/faction/${theirs}/wars`],["opponent_rankedwars",`/faction/${theirs}/rankedwars?limit=100`]];for(const[name,path]of specs)core[name]=await opt(path,key,name);
