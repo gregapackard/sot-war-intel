@@ -237,6 +237,12 @@ function attackPlayerId(side){return Number(side?.id??side?.player?.id??side?.pl
 function attackFactionId(side){return Number(side?.faction?.id??side?.faction_id??0)}
 function attackResult(a){return String(a?.result||a?.outcome||"").toLowerCase()}
 function successfulAttack(a){const r=attackResult(a);return !["lost","stalemate","escape","assist","interrupted"].some(x=>r.includes(x))}
+function suppressionLifecycle(){
+ const snaps=liveStore?.snapshots||[],out={};
+ for(let i=1;i<snaps.length;i++){const prev=new Map((snaps[i-1].opponent_members||[]).map(x=>[Number(x.id),x]));for(const m of snaps[i].opponent_members||[]){const id=Number(m.id),p=prev.get(id);if(!p)continue;const row=out[id]||(out[id]={id,name:m.name,hosp_entries:0,returns:[],revives:0,revive_settings:[],revivable_states:[]}),ps=String(p.status?.state||""),cs=String(m.status?.state||"");if(!/hospital/i.test(ps)&&/hospital/i.test(cs))row.hosp_entries++;if(/hospital/i.test(ps)&&!/hospital/i.test(cs))row.returns.push(Math.max(0,snaps[i].timestamp-snaps[i-1].timestamp));if(m.revive_setting!=null&&!row.revive_settings.includes(String(m.revive_setting)))row.revive_settings.push(String(m.revive_setting));if(m.is_revivable!=null&&!row.revivable_states.includes(String(m.is_revivable)))row.revivable_states.push(String(m.is_revivable))}}
+ for(const rv of liveStore?.revives||[]){const id=Number(rv.target?.id??rv.target_id??0);if(!id)continue;const row=out[id]||(out[id]={id,name:rv.target?.name||"",hosp_entries:0,returns:[],revives:0,revive_settings:[],revivable_states:[]});row.revives++}
+ return Object.values(out).map(x=>{const a=[...x.returns].sort((a,b)=>a-b);return{...x,median_observed_return_seconds:a.length?a[Math.floor(a.length/2)]:null}});
+}
 function buildCommandIntel(ours,theirs){
  const snaps=liveStore?.snapshots||[],attacks=liveStore?.attacks||[],cur=snaps.at(-1);if(!cur)return null;
  const opponents=new Map((cur.opponent_members||[]).map(m=>[Number(m.id),{id:Number(m.id),name:m.name,level:m.level,status:m.status,last_action:m.last_action,hits:0,scoreish:0,sotWins:0,sotLosses:0}]));
@@ -260,13 +266,13 @@ function buildCommandIntel(ours,theirs){
   const why=[];if(p.hits)why.push(p.hits+" live hits captured");if(active)why.push(la);if(unavailable)why.push(st);if(p.sotWins||p.sotLosses)why.push(p.sotWins+" SoT wins / "+p.sotLosses+" losses");if(base.ff_estimate)why.push("FF est "+Math.round(base.ff_estimate).toLocaleString());if(base.kal)why.push("KAL "+base.kal_loadouts+" loadout"+(base.kal_loadouts===1?"":"s"));if(base.hist_wars)why.push("hist "+base.hist_score.toFixed(1)+" score / "+base.hist_hits+" hits");if(base.activity_ratio!=null)why.push("FF activity "+Math.round(base.activity_ratio*100)+"% buckets");if(base.stat_growth!=null)why.push("stat trend "+(base.stat_growth>=0?"+":"")+Math.round(base.stat_growth*100)+"%");
   return{...p,baseline:base,threat:Math.round(threat),farm:Math.round(farm),suppress:Math.round(suppress),classification,why:why.join(" · ")||"live baseline only"};
  }).sort((a,b)=>b.suppress-a.suppress||b.threat-a.threat);
- return{opponent_faction_id:theirs,rows,matchups:Object.values(matchups),outside_activity:outside};
+ return{opponent_faction_id:theirs,rows,matchups:Object.values(matchups),outside_activity:outside,suppression_lifecycle:suppressionLifecycle()};
 }
 function renderCommandBoard(intel){
  if(!intel)return;
  const sup=intel.rows.filter(x=>x.classification==="SUPPRESS").slice(0,5),farm=intel.rows.filter(x=>x.classification==="FARM").sort((a,b)=>b.farm-a.farm).slice(0,8);
  const fmt=(arr,type)=>arr.length?arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid #222"><b>${x.name}</b> — ${type==="farm"?"Farm "+x.farm:"Suppress "+x.suppress+" / Threat "+x.threat}<br><small>${x.why}</small></div>`).join(""):"<small>None yet — collecting evidence.</small>";
- $("commandBoard").innerHTML=`<div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(farm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(sup,"sup")}</div></div><div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside_activity.length} captured attack(s) involving either war faction and a third party. Review evidence manually; this is not an automatic violation finding.</div></div>`;
+ $("commandBoard").innerHTML=`<div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(farm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(sup,"sup")}</div></div><div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside_activity.length} captured attack(s) involving either war faction and a third party. Review evidence manually; this is not an automatic violation finding.</div></div><div class="card" style="margin:12px 0 0"><b>💉 REVIVE / SUPPRESSION INTEL</b><div>${intel.suppression_lifecycle.filter(x=>x.hosp_entries||x.revives).slice(0,10).map(x=>"<div style=\"padding:6px 0\"><b>"+x.name+"</b> — hosp "+x.hosp_entries+" · revives "+x.revives+(x.median_observed_return_seconds!=null?" · observed return ~"+Math.round(x.median_observed_return_seconds/60)+"m":"")+(x.revive_settings.length?" · revive setting "+x.revive_settings.join("/"):"")+"</div>").join("")||"<small>Collecting hospital/revive transitions.</small>"}</div></div>`;
 }
 async function liveSnapshot(){
  if(!liveRunning)return;
