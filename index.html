@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.6</title>
+<title>Cloudy's SoT War Room v7.7</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.6</h1>
+<h1>☠ Cloudy's SoT War Room v7.7</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -28,7 +28,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 <div><label>Delay per Torn API request (ms)</label><input id="delay" type="number" min="700" max="5000" value="1100"></div>
 </div>
 <div class="row">
-<div><label>KAL distinct loadouts per rabbit</label><input id="kalHistory" type="number" min="1" max="10" value="3"></div>
+<div><label>KAL distinct loadouts per opponent</label><input id="kalHistory" type="number" min="1" max="10" value="3"></div>
 <div><label>KAL request delay (ms)</label><input id="kalDelay" type="number" min="250" max="5000" value="500"></div>
 </div>
 <div class="row"><div><label>FF detailed opponents</label><input id="ffDeepCount" type="number" min="5" max="60" value="25"></div><div><label>FF activity days</label><input id="ffActivityDays" type="number" min="1" max="30" value="14"></div></div><div id="bridgeState" style="margin-top:16px;padding:10px;border:1px solid #3a424e;border-radius:9px;font-weight:800">KAL Bridge: checking…</div><button id="go">Build Bulk War Intel Export</button>
@@ -39,11 +39,12 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 <div class="sub">Lightweight incremental collection during the active ranked war. Load a Deep Scan first to seed FFScouter, KAL and historical production into the command model.</div>
 <label>Deep Scan baseline JSON (recommended)</label><input id="baselineFile" type="file" accept=".json,application/json">
 <div id="baselineState" style="margin-top:8px"><small>No baseline loaded — live-only scoring will still work.</small></div>
+<div class="row"><div><label>Show targets for SoT member ID</label><input id="targetMemberId" type="number" value="4315564"></div><div><label>Ranking objective</label><input value="Win probability × expected respect" disabled></div></div>
 <div class="row">
 <div><label>Live snapshot interval (minutes)</label><input id="liveMinutes" type="number" min="2" max="60" value="5"></div>
 <div><label>War ID</label><input id="liveWarId" type="number" value="50768"></div>
 </div>
-<div class="row"><button id="liveStart">🔴 START LIVE WAR WATCH</button><button id="liveStop" disabled>■ STOP + EXPORT LIVE JSON</button></div>
+<div class="row"><button id="liveStart">🔴 START LIVE WAR WATCH</button><button id="liveStop" disabled>■ STOP + EXPORT LIVE JSON</button></div><button id="simWar" style="background:#39424e">🧪 SIMULATE WAR INTEL</button>
 <div id="liveSummary" style="margin-top:14px;padding:12px;background:#090b0e;border:1px solid #272d35;border-radius:9px">Live watch idle.</div>
 <div id="commandBoard" style="margin-top:14px"></div>
 </div>
@@ -296,6 +297,31 @@ function renderCommandBoard(intel){
  const fmt=(arr,type)=>arr.length?arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid #222"><b>${x.name}</b> — ${type==="farm"?"Farm "+x.farm:"Suppress "+x.suppress+" / Threat "+x.threat}<br><small>${x.why}</small></div>`).join(""):"<small>None yet — collecting evidence.</small>";
  $("commandBoard").innerHTML=`<div class="card" style="margin:0 0 12px"><b>⚔ BEST EXPECTED-VALUE TARGETS</b><div>${targetHtml}</div></div><div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(farm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(sup,"sup")}</div></div><div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside_activity.length} captured attack(s) involving either war faction and a third party. Review evidence manually; this is not an automatic violation finding.</div></div><div class="card" style="margin:12px 0 0"><b>💉 REVIVE / SUPPRESSION INTEL</b><div>${intel.suppression_lifecycle.filter(x=>x.hosp_entries||x.revives).slice(0,10).map(x=>"<div style=\"padding:6px 0\"><b>"+x.name+"</b> — hosp "+x.hosp_entries+" · revives "+x.revives+(x.median_observed_return_seconds!=null?" · observed return ~"+Math.round(x.median_observed_return_seconds/60)+"m":"")+(x.revive_settings.length?" · revive setting "+x.revive_settings.join("/"):"")+"</div>").join("")||"<small>Collecting hospital/revive transitions.</small>"}</div></div>`;
 }
+function runWarSimulation(){
+ const ours=Number($("ours").value)||41259,theirs=Number($("theirs").value)||99999,cloudy=Number($("targetMemberId").value)||4315564,t0=nowSec()-900;
+ const opp=[{id:8001,name:"EasyLow",level:20,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8002,name:"SweetSpot",level:55,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8003,name:"JuicyRisk",level:75,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8004,name:"Monster",level:90,last_action:{status:"Idle"},status:{state:"Okay"},is_revivable:true},{id:8005,name:"ReviveLoop",level:60,last_action:{status:"Offline"},status:{state:"Hospital"},revive_setting:"Everyone",is_revivable:true}];
+ const sot=[{id:cloudy,name:"CloudyMuffin440",level:36,last_action:{status:"Online"},status:{state:"Okay"}},{id:3836878,name:"BB",level:60,last_action:{status:"Online"},status:{state:"Okay"}},{id:900003,name:"HeavyHitter",level:90,last_action:{status:"Online"},status:{state:"Okay"}}];
+ deepBaseline={ffscouter:{sot:{members:[{id:cloudy,ffscouter:{bs_estimate:2000000}},{id:3836878,ffscouter:{bs_estimate:20000000}},{id:900003,ffscouter:{bs_estimate:200000000}}]}},attacks_by_war:{}};
+ baselineIndex=new Map([[8001,{ff_estimate:100000,hist_hits:20,hist_score:80,hist_wars:3}],[8002,{ff_estimate:1500000,hist_hits:40,hist_score:360,hist_wars:4}],[8003,{ff_estimate:4000000,hist_hits:55,hist_score:600,hist_wars:5}],[8004,{ff_estimate:300000000,hist_hits:80,hist_score:900,hist_wars:6}],[8005,{ff_estimate:1000000,hist_hits:30,hist_score:250,hist_wars:4}]]);
+ const side=(id,ff)=>({id,faction:{id:ff}}),atk=(id,a,d,result,respect,ended)=>({id,attacker:side(a,ours),defender:side(d,theirs),result,respect_gain:respect,ended});
+ liveStore={exporter:{name:"SIMULATION",version:"7.7"},war_id:"SIM",sot_faction_id:ours,opponent_faction_id:theirs,snapshots:[
+ {timestamp:t0,score:{sot:100,opponent:90,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Okay":"Okay"}})),sot_members:sot},
+ {timestamp:t0+300,score:{sot:145,opponent:120,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Hospital":"Okay"}})),sot_members:sot},
+ {timestamp:t0+600,score:{sot:190,opponent:150,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Okay":"Okay"}})),sot_members:sot},
+ {timestamp:t0+900,score:{sot:240,opponent:175,target:7500},opponent_members:opp,sot_members:sot}
+ ],attacks:[
+ atk("a1",3836878,8001,"Hospitalized",2.2,t0+60),atk("a2",900003,8001,"Hospitalized",2.4,t0+90),
+ atk("a3",3836878,8002,"Hospitalized",8.8,t0+120),atk("a4",900003,8002,"Hospitalized",9.2,t0+150),atk("a5",cloudy,8002,"Hospitalized",9.0,t0+180),
+ atk("a6",3836878,8003,"Hospitalized",13.0,t0+210),atk("a7",900003,8003,"Hospitalized",12.5,t0+240),atk("a8",cloudy,8003,"Lost",0,t0+270),
+ atk("a9",900003,8004,"Hospitalized",14.5,t0+300),
+ {id:"outside1",attacker:{id:777777,faction:{id:777}},defender:side(8002,theirs),result:"Hospitalized",respect_gain:4,ended:t0+330}
+ ],revives:[{id:"r1",timestamp:t0+580,target:{id:8005,name:"ReviveLoop"},reviver:{id:12345,name:"Medic"}}],derived:{}};
+ const intel=buildCommandIntel(ours,theirs);liveStore.derived.command_intel=intel;renderCommandBoard(intel);
+ const pt=intel.personalized_targets?.[cloudy]?.targets||[],life=intel.suppression_lifecycle.find(x=>x.id===8005);
+ $("liveSummary").innerHTML="<b>🧪 SIMULATION MODE</b> — synthetic war only; no Torn requests made.<br>Expected #1: SweetSpot. Actual #1: <b>"+(pt[0]?.name||"none")+"</b> · Outside activity: "+intel.outside_activity.length+" · ReviveLoop revives: "+(life?.revives||0);
+ log("\n🧪 SIM complete — top target "+(pt[0]?.name||"none")+"; "+intel.outside_activity.length+" outside event(s); "+(life?.revives||0)+" revive(s).");
+}
+$("simWar").onclick=runWarSimulation;
 async function liveSnapshot(){
  if(!liveRunning)return;
  const key=$("key").value.trim(),ours=Number($("ours").value),theirs=Number($("theirs").value),warId=Number($("liveWarId").value);
@@ -316,8 +342,8 @@ async function liveSnapshot(){
   const commandIntel=buildCommandIntel(ours,theirs);
   liveStore.derived={updated_at:snap.captured_at,recommendation:rec,velocity_5m:v5,velocity_15m:v15,total_attacks_captured:liveStore.attacks.length,total_revives_captured:liveStore.revives.length,command_intel:commandIntel};
   renderCommandBoard(commandIntel);
-  $("liveSummary").innerHTML=`<b>${rec}</b> — SoT ${os.score.toLocaleString()} vs RRR ${rs.score.toLocaleString()} / ${Number(war.target||0).toLocaleString()}<br>Snapshots: ${liveStore.snapshots.length} · New attacks this pass: ${newAttacks.length} · Total attacks: ${liveStore.attacks.length} · Revives: ${liveStore.revives.length}${v15?`<br>15m pace: SoT ${v15.sot_per_hour.toFixed(0)}/hr · RRR ${v15.opponent_per_hour.toFixed(0)}/hr`:""}`;
-  log(`✓ LIVE: SoT ${os.score} / RRR ${rs.score}; +${newAttacks.length} attacks; recommendation ${rec}`);
+  $("liveSummary").innerHTML=`<b>${rec}</b> — SoT ${os.score.toLocaleString()} vs Opponent ${rs.score.toLocaleString()} / ${Number(war.target||0).toLocaleString()}<br>Snapshots: ${liveStore.snapshots.length} · New attacks this pass: ${newAttacks.length} · Total attacks: ${liveStore.attacks.length} · Revives: ${liveStore.revives.length}${v15?`<br>15m pace: SoT ${v15.sot_per_hour.toFixed(0)}/hr · Opponent ${v15.opponent_per_hour.toFixed(0)}/hr`:""}`;
+  log(`✓ LIVE: SoT ${os.score} / Opponent ${rs.score}; +${newAttacks.length} attacks; recommendation ${rec}`);
  }catch(e){log("⚠ LIVE snapshot: "+e.message)}
 }
 function exportLive(){
