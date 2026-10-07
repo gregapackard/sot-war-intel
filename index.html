@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.7</title>
+<title>Cloudy's SoT War Room v7.8</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.7</h1>
+<h1>☠ Cloudy's SoT War Room v7.8</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -298,28 +298,24 @@ function renderCommandBoard(intel){
  $("commandBoard").innerHTML=`<div class="card" style="margin:0 0 12px"><b>⚔ BEST EXPECTED-VALUE TARGETS</b><div>${targetHtml}</div></div><div class="row"><div class="card" style="margin:0"><b>🎯 FARM BOARD</b>${fmt(farm,"farm")}</div><div class="card" style="margin:0"><b>☠ SUPPRESSION BOARD</b>${fmt(sup,"sup")}</div></div><div class="card" style="margin:12px 0 0"><b>🚨 OUTSIDE ACTIVITY REVIEW</b><div>${intel.outside_activity.length} captured attack(s) involving either war faction and a third party. Review evidence manually; this is not an automatic violation finding.</div></div><div class="card" style="margin:12px 0 0"><b>💉 REVIVE / SUPPRESSION INTEL</b><div>${intel.suppression_lifecycle.filter(x=>x.hosp_entries||x.revives).slice(0,10).map(x=>"<div style=\"padding:6px 0\"><b>"+x.name+"</b> — hosp "+x.hosp_entries+" · revives "+x.revives+(x.median_observed_return_seconds!=null?" · observed return ~"+Math.round(x.median_observed_return_seconds/60)+"m":"")+(x.revive_settings.length?" · revive setting "+x.revive_settings.join("/"):"")+"</div>").join("")||"<small>Collecting hospital/revive transitions.</small>"}</div></div>`;
 }
 function runWarSimulation(){
- const ours=Number($("ours").value)||41259,theirs=Number($("theirs").value)||99999,cloudy=Number($("targetMemberId").value)||4315564,t0=nowSec()-900;
- const opp=[{id:8001,name:"EasyLow",level:20,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8002,name:"SweetSpot",level:55,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8003,name:"JuicyRisk",level:75,last_action:{status:"Online"},status:{state:"Okay"},is_revivable:true},{id:8004,name:"Monster",level:90,last_action:{status:"Idle"},status:{state:"Okay"},is_revivable:true},{id:8005,name:"ReviveLoop",level:60,last_action:{status:"Offline"},status:{state:"Hospital"},revive_setting:"Everyone",is_revivable:true}];
- const sot=[{id:cloudy,name:"CloudyMuffin440",level:36,last_action:{status:"Online"},status:{state:"Okay"}},{id:3836878,name:"BB",level:60,last_action:{status:"Online"},status:{state:"Okay"}},{id:900003,name:"HeavyHitter",level:90,last_action:{status:"Online"},status:{state:"Okay"}}];
- deepBaseline={ffscouter:{sot:{members:[{id:cloudy,ffscouter:{bs_estimate:2000000}},{id:3836878,ffscouter:{bs_estimate:20000000}},{id:900003,ffscouter:{bs_estimate:200000000}}]}},attacks_by_war:{}};
- baselineIndex=new Map([[8001,{ff_estimate:100000,hist_hits:20,hist_score:80,hist_wars:3}],[8002,{ff_estimate:1500000,hist_hits:40,hist_score:360,hist_wars:4}],[8003,{ff_estimate:4000000,hist_hits:55,hist_score:600,hist_wars:5}],[8004,{ff_estimate:300000000,hist_hits:80,hist_score:900,hist_wars:6}],[8005,{ff_estimate:1000000,hist_hits:30,hist_score:250,hist_wars:4}]]);
- const side=(id,ff)=>({id,faction:{id:ff}}),atk=(id,a,d,result,respect,ended)=>({id,attacker:side(a,ours),defender:side(d,theirs),result,respect_gain:respect,ended});
- liveStore={exporter:{name:"SIMULATION",version:"7.7"},war_id:"SIM",sot_faction_id:ours,opponent_faction_id:theirs,snapshots:[
- {timestamp:t0,score:{sot:100,opponent:90,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Okay":"Okay"}})),sot_members:sot},
- {timestamp:t0+300,score:{sot:145,opponent:120,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Hospital":"Okay"}})),sot_members:sot},
- {timestamp:t0+600,score:{sot:190,opponent:150,target:7500},opponent_members:opp.map(x=>({...x,status:{state:x.id===8005?"Okay":"Okay"}})),sot_members:sot},
- {timestamp:t0+900,score:{sot:240,opponent:175,target:7500},opponent_members:opp,sot_members:sot}
- ],attacks:[
- atk("a1",3836878,8001,"Hospitalized",2.2,t0+60),atk("a2",900003,8001,"Hospitalized",2.4,t0+90),
- atk("a3",3836878,8002,"Hospitalized",8.8,t0+120),atk("a4",900003,8002,"Hospitalized",9.2,t0+150),atk("a5",cloudy,8002,"Hospitalized",9.0,t0+180),
- atk("a6",3836878,8003,"Hospitalized",13.0,t0+210),atk("a7",900003,8003,"Hospitalized",12.5,t0+240),atk("a8",cloudy,8003,"Lost",0,t0+270),
- atk("a9",900003,8004,"Hospitalized",14.5,t0+300),
- {id:"outside1",attacker:{id:777777,faction:{id:777}},defender:side(8002,theirs),result:"Hospitalized",respect_gain:4,ended:t0+330}
- ],revives:[{id:"r1",timestamp:t0+580,target:{id:8005,name:"ReviveLoop"},reviver:{id:12345,name:"Medic"}}],derived:{}};
- const intel=buildCommandIntel(ours,theirs);liveStore.derived.command_intel=intel;renderCommandBoard(intel);
- const pt=intel.personalized_targets?.[cloudy]?.targets||[],life=intel.suppression_lifecycle.find(x=>x.id===8005);
- $("liveSummary").innerHTML="<b>🧪 SIMULATION MODE</b> — synthetic war only; no Torn requests made.<br>Expected #1: SweetSpot. Actual #1: <b>"+(pt[0]?.name||"none")+"</b> · Outside activity: "+intel.outside_activity.length+" · ReviveLoop revives: "+(life?.revives||0);
- log("\n🧪 SIM complete — top target "+(pt[0]?.name||"none")+"; "+intel.outside_activity.length+" outside event(s); "+(life?.revives||0)+" revive(s).");
+ if(!deepBaseline||!baselineIndex.size){alert("Load a Deep Scan baseline JSON first. v7.8 simulation uses your real baseline.");return}
+ const ours=Number($("ours").value)||Number(deepBaseline?.exporter?.sot_faction_id)||41259,theirs=Number($("theirs").value)||Number(deepBaseline?.exporter?.opponent_faction_id)||0,sid=Number($("targetMemberId").value)||4315564,t0=nowSec()-900;
+ const oppSrc=deepBaseline?.core?.opponent_members?.data?.members||deepBaseline?.ffscouter?.opponent?.members||[];
+ const sotSrc=deepBaseline?.core?.sot_members?.data?.members||deepBaseline?.ffscouter?.sot?.members||[];
+ const norm=(m,online=true)=>({id:Number(m.id||m.player_id),name:m.name||("Player "+(m.id||m.player_id)),level:Number(m.level||0),last_action:{status:online?"Online":"Idle"},status:{state:"Okay"},is_revivable:true});
+ const opp=oppSrc.map((m,i)=>norm(m,i%4!==3)).filter(x=>x.id),sot=sotSrc.map(m=>norm(m,true)).filter(x=>x.id);
+ if(!opp.length||!sot.length){alert("Baseline is missing faction member rosters. Run a fresh Deep Scan and load that JSON.");return}
+ const actor=sot.some(x=>x.id===sid)?sid:sot[0].id;$("targetMemberId").value=actor;
+ const ranked=[...opp].sort((a,b)=>{const A=baselineIndex.get(a.id)||{},B=baselineIndex.get(b.id)||{};return (Number(B.hist_score||0)/(Number(B.hist_wars)||1)+Math.log10(Number(B.ff_estimate||1))*8)-(Number(A.hist_score||0)/(Number(A.hist_wars)||1)+Math.log10(Number(A.ff_estimate||1))*8)});
+ const sample=ranked.slice(0,Math.min(10,ranked.length)),side=(id,ff)=>({id,faction:{id:ff}}),attacks=[];
+ const hitters=sot.slice(0,Math.min(4,sot.length)).map(x=>x.id);let seq=1;
+ for(let i=0;i<sample.length;i++){const p=sample[i],base=baselineIndex.get(p.id)||{},respect=Math.max(.5,Math.min(15,Number(base.hist_wars)?Number(base.hist_score)/(Math.max(1,Number(base.hist_hits))):Number(p.level||1)/8));const hitter=hitters[i%hitters.length]||actor;attacks.push({id:"sim"+seq++,attacker:side(hitter,ours),defender:side(p.id,theirs),result:"Hospitalized",respect_gain:respect,ended:t0+60+i*35});if(i===2)attacks.push({id:"sim"+seq++,attacker:side(actor,ours),defender:side(p.id,theirs),result:"Lost",respect_gain:0,ended:t0+75+i*35})}
+ if(sample[0])attacks.push({id:"outside-sim",attacker:{id:777777,faction:{id:777}},defender:side(sample[0].id,theirs),result:"Hospitalized",respect_gain:4,ended:t0+400});
+ const reviveTarget=sample[1]||sample[0],snap=(ts,phase)=>({timestamp:ts,score:{sot:100+phase*55,opponent:90+phase*38,target:7500},opponent_members:opp.map(x=>({...x,status:{state:reviveTarget&&x.id===reviveTarget.id&&phase===1?"Hospital":"Okay"},revive_setting:reviveTarget&&x.id===reviveTarget.id?"Everyone":null})),sot_members:sot});
+ liveStore={exporter:{name:"BASELINE SIMULATION",version:"7.8",baseline_driven:true},war_id:"SIM",sot_faction_id:ours,opponent_faction_id:theirs,snapshots:[snap(t0,0),snap(t0+300,1),snap(t0+600,2),snap(t0+900,3)],attacks,revives:reviveTarget?[{id:"sim-revive",timestamp:t0+580,target:{id:reviveTarget.id,name:reviveTarget.name},reviver:{id:12345,name:"SimMedic"}}]:[],derived:{}};
+ const intel=buildCommandIntel(ours,theirs);liveStore.derived.command_intel=intel;renderCommandBoard(intel);const pt=intel.personalized_targets?.[actor]?.targets||[];
+ $("liveSummary").innerHTML="<b>🧪 BASELINE-DRIVEN SIMULATION</b> — real Deep Scan roster/intel + fabricated live events; no Torn requests made.<br>Member: <b>"+(sot.find(x=>x.id===actor)?.name||actor)+"</b> · Opponents: "+opp.length+" · Simulated attacks: "+attacks.length+" · Top EV target: <b>"+(pt[0]?.name||"none")+"</b>";
+ log("\n🧪 Baseline sim complete — "+opp.length+" real opponents, "+attacks.length+" synthetic live attacks, top EV target "+(pt[0]?.name||"none")+".");
 }
 $("simWar").onclick=runWarSimulation;
 async function liveSnapshot(){
