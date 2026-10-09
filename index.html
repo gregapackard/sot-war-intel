@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cloudy's SoT War Room v7.9</title>
+<title>Cloudy's SoT War Room v8.0</title>
 <style>
 :root{color-scheme:dark}body{margin:0;background:#0b0d10;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:920px;margin:32px auto;padding:0 18px}.card{background:#15181d;border:1px solid #303640;border-radius:14px;padding:22px;margin:14px 0}
@@ -13,7 +13,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 </style>
 </head><body><div class="wrap">
 <div class="card">
-<h1>☠ Cloudy's SoT War Room v7.9</h1>
+<h1>☠ Cloudy's SoT War Room v8.0</h1>
 <div class="sub">SoT War Room — pre-war deep scan: Torn history + FFScouter Premium + KAL saved loadouts/history.</div>
 <label>Temporary / limited Torn API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste Torn key">
 <label>FFScouter Premium API key</label><input id="ffkey" type="password" autocomplete="off" placeholder="Paste registered FFScouter key">
@@ -31,7 +31,7 @@ button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;backgr
 <div><label>KAL distinct loadouts per opponent</label><input id="kalHistory" type="number" min="1" max="10" value="3"></div>
 <div><label>KAL request delay (ms)</label><input id="kalDelay" type="number" min="250" max="5000" value="500"></div>
 </div>
-<div class="row"><div><label>FF detailed opponents</label><input id="ffDeepCount" type="number" min="5" max="60" value="25"></div><div><label>FF activity days</label><input id="ffActivityDays" type="number" min="1" max="30" value="14"></div></div><div id="bridgeState" style="margin-top:16px;padding:10px;border:1px solid #3a424e;border-radius:9px;font-weight:800">KAL Bridge: checking…</div><button id="go">Build Bulk War Intel Export</button>
+<div class="row"><div><label>FF stat-history priority per faction (activity collects EVERY member)</label><input id="ffDeepCount" type="number" min="0" max="100" value="25"></div><div><label>FF activity days</label><input id="ffActivityDays" type="number" min="1" max="30" value="14"></div></div><div id="bridgeState" style="margin-top:16px;padding:10px;border:1px solid #3a424e;border-radius:9px;font-weight:800">KAL Bridge: checking…</div><button id="go">Build Bulk War Intel Export</button>
 <p><small>Torn history uses attacksfull bulk mode. FFScouter is batched. KAL requests are relayed through the Cloudy KAL Bridge userscript to avoid browser CORS. Install/enable the bridge before scanning. Missing intel is recorded, not fatal.</small></p>
 </div>
 <div class="card">
@@ -160,17 +160,31 @@ async function collectFFIntel(ffkey,core,ours,theirs){
  const om=memberArray(core.opponent_members),sm=memberArray(core.sot_members),oi=om.map(m=>Number(m.id)).filter(Boolean),si=sm.map(m=>Number(m.id)).filter(Boolean);
  async function batch(ids,label){const all=[],CHUNK=75;for(let i=0;i<ids.length;i+=CHUNK){const c=ids.slice(i,i+CHUNK),d=await ffOptional(`/get-stats?targets=${c.join(",")}`,ffkey,`${label} FF stats ${i+1}-${Math.min(i+CHUNK,ids.length)}`);if(d.ok){const rows=Array.isArray(d.data)?d.data:(d.data?.results||d.data?.stats||[]);all.push(...rows)}if(i+CHUNK<ids.length)await sleep(600)}return all}
  const os=await batch(oi,"Opponent"),ss=await batch(si,"SoT"),by=rows=>Object.fromEntries(rows.map(x=>[String(x.player_id),x])),o=by(os),s=by(ss);
- const deepCount=Math.max(5,Math.min(60,Number($("ffDeepCount").value)||25));
+ const deepCount=Math.max(0,Math.min(100,Number($("ffDeepCount").value)||0));
  const activityDays=Math.max(1,Math.min(30,Number($("ffActivityDays").value)||14));
- const priority=[...om].sort((a,b)=>(Number(o[String(b.id)]?.bs_estimate||0)-Number(o[String(a.id)]?.bs_estimate||0))||Number(b.level||0)-Number(a.level||0)).slice(0,deepCount);
- const playerDeep={},deepEnd=Math.floor(Date.now()/1000),deepStart=deepEnd-activityDays*86400;
- for(let i=0;i<priority.length;i++){const m=priority[i],id=Number(m.id);log("  FF detail "+(i+1)+"/"+priority.length+" "+m.name);const act=await ffOptional("/activity/player?target="+id+"&start="+deepStart+"&end="+deepEnd+"&bucket=900",ffkey,m.name+" activity");const hist=await ffOptional("/get-stats-history?target="+id+"&limit=100&sort=desc",ffkey,m.name+" stat history");playerDeep[id]={id,name:m.name,activity_15m:act,stats_history_6h:hist};if(i+1<priority.length)await sleep(1050);}
+ const priority=[...om,...sm].filter(m=>Number(m.id)>0);
+ const playerDeep={},deepEnd=Math.floor(Date.now()/900)*900,deepStart=deepEnd-activityDays*86400;
+ const topOpp=new Set([...om].sort((a,b)=>Number(o[String(b.id)]?.bs_estimate||0)-Number(o[String(a.id)]?.bs_estimate||0)).slice(0,deepCount).map(m=>Number(m.id)));
+ const topSot=new Set([...sm].sort((a,b)=>Number(s[String(b.id)]?.bs_estimate||0)-Number(s[String(a.id)]?.bs_estimate||0)).slice(0,deepCount).map(m=>Number(m.id)));
+ let completed=0,failed=0;
+ log("  FF FULL ROSTER: "+om.length+" opponents + "+sm.length+" SoT; 15-minute activity, "+activityDays+" days");
+ for(let i=0;i<priority.length;i++){
+  const m=priority[i],id=Number(m.id),side=i<om.length?"opponent":"sot";
+  log("  FF activity "+(i+1)+"/"+priority.length+" ["+side+"] "+m.name);
+  const act=await ffOptional("/activity/player?target="+id+"&start="+deepStart+"&end="+deepEnd+"&bucket=900",ffkey,m.name+" activity");
+  let hist={ok:false,error:"not requested (outside stat-history priority)"};
+  if((side==="opponent"?topOpp:topSot).has(id))hist=await ffOptional("/get-stats-history?target="+id+"&limit=100&sort=desc",ffkey,m.name+" stat history");
+  playerDeep[id]={id,name:m.name,side,activity_15m:act,stats_history_6h:hist};
+  if(act.ok)completed++;else failed++;
+  if(i+1<priority.length)await sleep(1500);
+ }
+ log("  FF full roster activity complete: "+completed+" succeeded, "+failed+" failed");
  const end=Math.floor(Date.now()/1000),start=end-14*86400;
  const oppActivity=await ffOptional(`/activity/faction?faction_id=${theirs}&start=${start}&end=${end}&bucket=3600`,ffkey,"Opponent 14d hourly activity");
  const sotActivity=await ffOptional(`/activity/faction?faction_id=${ours}&start=${start}&end=${end}&bucket=3600`,ffkey,"SoT 14d hourly activity");
  let flights={ok:false,error:"not requested"};
  try{flights=await ffOptional(`/player-flights/batch?targets=${oi.join(",")}`,ffkey,"Opponent current flights")}catch(e){flights={ok:false,error:e.message}}
- return{enabled:true,key_status:keyStatus,activity:{opponent_14d_hourly:oppActivity,sot_14d_hourly:sotActivity,player_deep:playerDeep,player_deep_count:priority.length,player_activity_days:activityDays},flights,opponent:{faction_id:theirs,requested:oi.length,received:os.length,members:om.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:o[String(m.id)]||null}))},sot:{faction_id:ours,requested:si.length,received:ss.length,members:sm.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:s[String(m.id)]||null}))}};
+ return{enabled:true,key_status:keyStatus,activity:{opponent_14d_hourly:oppActivity,sot_14d_hourly:sotActivity,player_deep:playerDeep,player_deep_count:priority.length,player_activity_success:completed,player_activity_failed:failed,player_activity_days:activityDays},flights,opponent:{faction_id:theirs,requested:oi.length,received:os.length,members:om.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:o[String(m.id)]||null}))},sot:{faction_id:ours,requested:si.length,received:ss.length,members:sm.map(m=>({id:m.id,name:m.name,level:m.level,ffscouter:s[String(m.id)]||null}))}};
 }
 
 
